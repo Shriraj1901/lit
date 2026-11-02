@@ -7,7 +7,8 @@
 
 import {array, ignoreBenignErrors} from '../helpers.js';
 import {LitVirtualizer} from '../../lit-virtualizer.js';
-import {nothing} from 'lit';
+import {nothing, render as litRender} from 'lit';
+import {virtualize} from '../../virtualize.js';
 import {expect, html, fixture} from '@open-wc/testing';
 
 describe('Virtualizer re-renders properly after changes to the `items` array', () => {
@@ -85,5 +86,71 @@ describe('Virtualizer re-renders properly after changes to the `items` array', (
     // outside the bounds of the newly set `items`
     // array).
     expect(outOfBounds).to.be.false;
+  });
+});
+
+describe('virtualize() directive re-renders properly after changes to the `items` array', () => {
+  ignoreBenignErrors(beforeEach, afterEach);
+
+  it('should not call keyFunction or renderItem with undefined when the number of items is reduced', async () => {
+    interface NamedItem {
+      name: string;
+    }
+
+    const _100Items = array(100).map((_, i) => ({name: `Item ${i}`}));
+    const _5Things = array(5).map((_, i) => ({name: `Thing ${i}`}));
+
+    // The directive keeps its own copy of the range that the Virtualizer last
+    // reported. If that range is used to read from a newly set, shorter
+    // `items` array, `undefined` is passed to the user's callbacks, which
+    // are typed as always receiving a real item.
+    let undefinedItem = false;
+    const keyFunction = (item: NamedItem) => {
+      if (item === undefined) {
+        undefinedItem = true;
+        return -1;
+      }
+      return item.name;
+    };
+    const renderItem = (item: NamedItem) => {
+      if (item === undefined) {
+        undefinedItem = true;
+        return html``;
+      }
+      return html`<p>${item.name}</p>`;
+    };
+
+    const container = document.createElement('div');
+    container.style.cssText = 'height: 200px; overflow: auto;';
+    document.body.appendChild(container);
+    try {
+      const update = (items: NamedItem[]) =>
+        litRender(
+          html`${virtualize({scroller: true, items, keyFunction, renderItem})}`,
+          container
+        );
+
+      update(_100Items);
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      expect(container.textContent).to.contain('Item 0');
+
+      container.scrollBy(0, 100000);
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      expect(container.textContent).to.contain('Item 99');
+
+      // Replace `items` with a much shorter array and re-render again
+      // before the Virtualizer has reported a new range.
+      update(_5Things);
+      update(_5Things);
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+
+      expect(undefinedItem).to.be.false;
+      expect(container.textContent).to.contain('Thing 4');
+    } finally {
+      container.remove();
+    }
   });
 });
